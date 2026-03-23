@@ -1,37 +1,30 @@
-# Airflow setup
+# Building Automated Data Pipelines (homework)
 
-The lecture PDF references Apache Airflow `2.0.1`, but this workspace is pinned to Airflow `3.1.2` because you said you need Airflow 3 for ongoing configuration and DAG work.
+Airflow **3.1.2** in Docker: DAG `weather_processor` (`airflow/dags/weather.py`) — daily OpenWeatherMap timemachine → SQLite `./airflow/weather.db`.
 
-## Start
+## Run
 
 ```bash
 docker compose up -d
 docker compose logs -f airflow
 ```
 
-Open `http://localhost:8080` when the webserver is ready.
+[http://localhost:8080](http://localhost:8080) · `docker compose down`
 
-This is suitable for local development: creating DAGs, testing connections, adjusting config, and iterating on plugins. It is not a production deployment model.
+## Login
 
-There are **two** databases in this homework setup:
-
-- **Postgres** (`postgres` service) holds **Airflow’s metadata** (DAG runs, users, variables, etc.). Airflow 3 `standalone` starts several processes that all talk to that DB at once; **SQLite is not reliable there**, which is why the UI can show “can’t be reached” if metadata is on SQLite.
-- **SQLite** stores **your own data** in `./airflow/weather.db` (`/opt/airflow/weather.db` in the container). Compose defines `AIRFLOW_CONN_WEATHER_CONN` as JSON (`conn_type` **sqlite**, **host** `/opt/airflow/weather.db`). Do not use a `sqlite:////…` URI for that env var: Airflow’s sqlite hook can rewrite it into an invalid `file://opt/…` URI (`invalid uri authority: opt`). In the UI, use type **SQLite** and **Host** = `/opt/airflow/weather.db` only (no `sqlite://` prefix).
-
-The container uses **`LocalExecutor`** with Postgres metadata, which matches a normal local Airflow 3 dev stack.
-
-## Credentials
-
-Airflow `standalone` creates an admin account automatically. After startup, print the generated password with:
+User `admin`. Password:
 
 ```bash
 docker compose exec airflow cat /opt/airflow/standalone_admin_password.txt
 ```
 
-Username: `admin`
+## Configure (UI)
 
-## Stop
+- Variable **`WEATHER_API_KEY`** — OpenWeather key  
+- Connection **`weather_conn_http`** — HTTP, `https` + `api.openweathermap.org`  
+- **`weather_conn`** — from Compose (`AIRFLOW_CONN_WEATHER_CONN`); use JSON + host `/opt/airflow/weather.db`, not `sqlite://` URIs
 
-```bash
-docker compose down
-```
+## DAG (short)
+
+`@daily`, catchup from 2026-03-20 UTC; cities Lviv, Kolomyia, Kyiv, Kharkiv, Odesa; chain geocode → timemachine → `measures` table.
