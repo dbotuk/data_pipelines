@@ -1,0 +1,35 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: airflow-hw-postgres
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres-db-volume:/var/lib/postgresql/data
+
+  airflow:
+    image: apache/airflow:3.1.2
+    container_name: airflow-hw
+    depends_on:
+      - postgres
+    ports:
+      - "8080:8080"
+    environment:
+      AIRFLOW_HOME: /opt/airflow
+      # App SQLite file (DAG tasks). Use JSON + host, not sqlite:////… URI: the SqliteHook
+      # rewrites "sqlite://" substrings and a 4-slash URI becomes file://opt/… (invalid).
+      AIRFLOW_CONN_WEATHER_CONN: '{"conn_type":"sqlite","host":"/opt/airflow/weather.db"}'
+      # Airflow 3 "standalone" runs several processes (API, scheduler, DAG processor, …).
+      # They all hit the metadata DB concurrently; SQLite locks and the UI/API can die.
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      _PIP_ADDITIONAL_REQUIREMENTS: "apache-airflow-providers-sqlite"
+    volumes:
+      - ./airflow:/opt/airflow
+    command: standalone
+
+volumes:
+  postgres-db-volume:
