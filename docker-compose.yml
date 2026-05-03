@@ -1,3 +1,26 @@
+x-airflow-common: &airflow-common
+  image: apache/airflow:3.1.2
+  environment: &airflow-common-env
+    AIRFLOW_HOME: /opt/airflow
+    AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
+    AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-api:8080/execution/
+    AIRFLOW__API_AUTH__JWT_SECRET: airflow-homework-jwt-secret
+    AIRFLOW__API__HOST: 0.0.0.0
+    AIRFLOW__API__PORT: 8080
+    AIRFLOW_CONN_WEATHER_CONN: '{"conn_type":"postgres","host":"postgres","login":"airflow","password":"airflow","schema":"airflow","port":5432}'
+    _PIP_ADDITIONAL_REQUIREMENTS: "apache-airflow-providers-celery apache-airflow-providers-postgres redis"
+  volumes:
+    - ./airflow:/opt/airflow
+  depends_on:
+    postgres:
+      condition: service_started
+    redis:
+      condition: service_started
+
 services:
   postgres:
     image: postgres:16
@@ -9,27 +32,85 @@ services:
     volumes:
       - postgres-db-volume:/var/lib/postgresql/data
 
-  airflow:
-    image: apache/airflow:3.1.2
-    container_name: airflow-hw
+  redis:
+    image: redis:7.2-alpine
+    container_name: airflow-hw-redis
+
+  airflow-init:
+    <<: *airflow-common
+    container_name: airflow-hw-init
     depends_on:
-      - postgres
+      postgres:
+        condition: service_started
+      redis:
+        condition: service_started
+    command: >
+      bash -c "airflow db migrate &&
+      airflow users create
+      --username admin
+      --password admin
+      --firstname Admin
+      --lastname User
+      --role Admin
+      --email admin@example.com || true"
+
+  airflow-api:
+    <<: *airflow-common
+    container_name: airflow-hw-api
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
     ports:
       - "8080:8080"
-    environment:
-      AIRFLOW_HOME: /opt/airflow
-      # App SQLite file (DAG tasks). Use JSON + host, not sqlite:////… URI: the SqliteHook
-      # rewrites "sqlite://" substrings and a 4-slash URI becomes file://opt/… (invalid).
-      AIRFLOW_CONN_WEATHER_CONN: '{"conn_type":"sqlite","host":"/opt/airflow/weather.db"}'
-      # Airflow 3 "standalone" runs several processes (API, scheduler, DAG processor, …).
-      # They all hit the metadata DB concurrently; SQLite locks and the UI/API can die.
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
-      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
-      AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      _PIP_ADDITIONAL_REQUIREMENTS: "apache-airflow-providers-sqlite"
-    volumes:
-      - ./airflow:/opt/airflow
-    command: standalone
+    command: api-server
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/api/v2/monitor/health', timeout=5)\""]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: airflow-hw-scheduler
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+      airflow-api:
+        condition: service_healthy
+    command: scheduler
+
+  airflow-dag-processor:
+    <<: *airflow-common
+    container_name: airflow-hw-dag-processor
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+      airflow-api:
+        condition: service_healthy
+    command: dag-processor
+
+  airflow-worker:
+    <<: *airflow-common
+    container_name: airflow-hw-worker
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+      airflow-api:
+        condition: service_healthy
+    command: celery worker
+
+  airflow-flower:
+    <<: *airflow-common
+    container_name: airflow-hw-flower
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+      airflow-api:
+        condition: service_healthy
+    ports:
+      - "5555:5555"
+    command: celery flower
 
 volumes:
   postgres-db-volume:
